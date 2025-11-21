@@ -2,7 +2,7 @@
 
 # Default values
 NPROC_PER_NODE=4
-VISIBLE_DEVICES="0,2,3,6"
+VISIBLE_DEVICES="0,1,2,3"
 CONFIG_FILE="./config/s3dis.yaml"
 
 # Function to display usage
