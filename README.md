@@ -53,6 +53,10 @@ To train the model (default uses S3DIS Area 5 for validation):
 bash scripts/train_s3dis.sh
 ```
 
+## ⬇️ Pre-trained Models
+
+You can download our pre-trained models [here](https://drive.google.com/file/d/1tfy7AXZ6nDOnUPfQDHd79-baYM1mhyXv/view?usp=sharing)
+
 ## 🙏 Acknowledgements
 
 We would like to thank the authors of [Point Transformer V3](https://github.com/Pointcept/PointTransformerV3) for their excellent work. Parts of our code are derived from their open-source repository.
