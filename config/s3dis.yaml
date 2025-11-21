@@ -1,0 +1,246 @@
+experiment:
+  seed: 1003
+  output_dir: ./exp/s3dis
+
+data:
+  dataset_name: s3dis
+  root: /path/to/data/S3DIS  # Root directory containing scene folders
+
+  # Data loading configuration
+  grid_sample:
+    grid_size: 0.03
+    mode: train
+    hash_type: fnv
+  
+  max_points_per_batch: 50000
+  train_batch_size: 10
+
+  # DataLoader settings
+  num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  
+  train_transform:
+    - type: SphereCrop
+      point_max: 131072
+      mode: random
+    - type: ElasticDistortion
+      distortion_params: [[0.2, 0.4], [0.8, 1.6]]
+    - type: RandomRotate
+      angle: [-1, 1]
+      axis: z
+      p: 0.5
+    - type: RandomRotate
+      angle: [-0.015625, 0.015625]
+      axis: x
+      p: 0.5
+    - type: RandomRotate
+      angle: [-0.015625, 0.015625]
+      axis: y
+      p: 0.5
+    - type: RandomScale
+      scale: [0.9, 1.1]
+      anisotropic: true
+    - type: RandomFlip
+      p: 0.5
+    - type: RandomJitter
+      sigma: 0.01
+      clip: 0.05
+    - type: ChromaticAutoContrast
+      p: 0.2
+    - type: ChromaticJitter
+      p: 0.95
+      std: 0.05
+    - type: NormalizeColor
+    - type: GridSample
+      grid_size: 0.03
+      hash_type: fnv
+      mode: train
+    - type: Collect
+      keys: ['coord', 'label']
+      feat_keys: ['coord', 'color', 'normal']
+
+  val_transform:
+    - type: NormalizeColor
+    - type: Collect
+      keys: ['coord', 'label']
+      feat_keys: ['coord', 'color', 'normal']
+
+model:
+  pool_reduce: "mean"
+
+  # Encoder（通道/深度/头数/patch）
+  ptv3_enc_channels:   [16, 32, 64, 128, 256]
+  ptv3_enc_depths:     [2, 2, 2, 4, 2]
+  ptv3_enc_num_head:   [1, 2, 4, 8, 16]
+  ptv3_enc_patch_size: [128, 256, 384, 512, 768]
+
+  # Decoder（注意 dec_channels[0]=最终embedding维度）
+  ptv3_dec_channels:   [96, 128, 192, 256]
+  ptv3_dec_depths:     [2,   2,   2,   2]
+  ptv3_dec_num_head:   [6,   8,   12,   16]
+  ptv3_dec_patch_size: [128, 256, 384, 512]
+
+  # MLP/正则
+  ptv3_mlp_ratio: 3.0
+  ptv3_drop_path: 0.3
+
+  # 分 stage 的 RPE/Flash（默认是全局：RPE=false, Flash=true）
+  enc_enable_rpe:   [false, false, false, false, false]
+  enc_enable_flash: [true, true, true, true, true]
+  dec_enable_rpe:   [false, false, false, false]
+  dec_enable_flash: [true, true, true, true]
+
+  target_sp_size: 400      # 目标超点大小
+  target_max_sp_cc: 60     # 每个连通分量最大超点数
+  edge_threshold: [0.75, 0.52]    # 特征和语义相似度阈值
+  k_p: 16
+  k_seed: 64
+  group_points_cap: 10240000
+  strong_k_min: 6
+  strong_k_max: 10
+  density_gamma: 1.0
+  w_cos: 1.0
+  w_geo: 0.24
+  num_classes: 13  # S3DIS has 13 semantic classes
+  feat_dtype: bfloat16
+
+  use_dgl_for_scores: true
+  edge_chunk: 2000000
+  channel_chunk: 128
+  scores_use_fp16: false
+
+loss:
+  num_classes: 13
+  ignore_label: -1
+  w_ce: 1.0
+  w_cbl: 1.0
+  w_sp_disc: 1.0
+
+  sp_margin_pull: 0.1
+  sp_margin_push: 0.1
+  sp_weight_pull: 1.0
+  sp_weight_push: 1.0
+
+  cbl_temperature: 0.3
+
+optimizer:
+  epochs: 1400
+  warmup_epochs: 100
+  maintain_epochs: 1000
+  base_lr: 1.5e-4
+  min_lr: 7.5e-6
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  grad_clip_norm: 1.0
+  ema:
+    enable: true
+    decay: 0.999  
+
+amp:
+  enable: true
+  dtype: bfloat16
+
+checkpoint:
+  save_every_epochs: 50
+  resume: null  # Set to checkpoint path to resume training
+
+logging:
+  log_interval: 1  # Log every N batches
+  val_every_epochs: 5
+  epochs_to_profile: []  # E.g., [0, 1] to profile first two epochs
+
+validation:
+  target_sp_size: 400       # 目标超点大小
+  target_max_sp_cc: 60      # 每个连通分量最大超点数
+  edge_threshold: [0.75, 0.52]    # 特征和语义相似度阈值
+  k_p: 16
+  k_seed: 64
+  group_points_cap: 10240000
+  strong_k_min: 6
+  strong_k_max: 10
+  w_cos: 1.0
+  w_geo: 0.24
+  use_dgl_for_scores: true
+  edge_chunk: 2000000
+  channel_chunk: 128
+  scores_use_fp16: true
+
+stage_schedules:
+  stages:
+    - name: A
+      span: [0.00, 0.142857]
+      params:
+        model.sp_1.target_max_sp_cc: {mode: const, value: 50}
+        model.k_p:               {mode: const, value: 16}
+        model.sp_1.k_seed:            {mode: const, value: 8}
+        model.strong_k_min:      {mode: const, value: 12}
+        model.strong_k_max:      {mode: const, value: 16}
+        model.sp_1.edge_threshold:    {mode: const, value: 0.00}
+        model.sp_1.w_cos:             {mode: const, value: 0.00}
+        model.sp_1.w_geo:             {mode: const, value: 1.00}
+        criterion.w_ce:          {mode: const, value: 0.0}
+        criterion.w_cbl:         {mode: const, value: 1.0}
+        criterion.w_sp_disc:     {mode: const, value: 1.0}
+        criterion.cbl_temperature: {mode: const, value: 0.40}
+
+    - name: B
+      span: [0.142857, 0.571429]
+      params:
+        model.sp_1.target_max_sp_cc: {mode: const, value: 100}
+        model.k_p:               {mode: const, value: 16}
+        model.sp_1.k_seed:            {mode: const, value: 8}
+        model.strong_k_min:      {mode: const, value: 8}
+        model.strong_k_max:      {mode: const, value: 12}
+        model.sp_1.edge_threshold:    {mode: linear, start: 0.00, end: 0.90}
+        model.sp_1.w_cos:             {mode: linear, start: 0.00, end: 1.00}
+        model.sp_1.w_geo:             {mode: linear, start: 1.00, end: 0.2}
+        criterion.w_ce:          {mode: poly, start: 0.00, end: 1.00, power: 2.0}
+        criterion.w_cbl:         {mode: const, value: 1.0}
+        criterion.w_sp_disc:     {mode: const, value: 1.0}
+        criterion.cbl_temperature: {mode: linear, start: 0.40, end: 0.30}
+
+    - name: C
+      span: [0.571429, 0.714286]
+      params:
+        model.sp_1.target_max_sp_cc: {mode: const, value: 500}
+        model.k_p:               {mode: const, value: 16}
+        model.sp_1.k_seed:            {mode: const, value: 8}
+        model.strong_k_min:      {mode: const, value: 4}
+        model.strong_k_max:      {mode: const, value: 6}
+        model.sp_1.edge_threshold:    {mode: const, value: 0.90}
+        model.sp_1.w_cos:             {mode: const, value: 1.00}
+        model.sp_1.w_geo:             {mode: const, value: 0.2}
+        criterion.w_ce:          {mode: const, value: 1.0}
+        criterion.w_cbl:         {mode: const, value: 1.0}
+        criterion.w_sp_disc:     {mode: const, value: 1.0}
+        criterion.cbl_temperature: {mode: const, value: 0.30}
+
+    - name: D
+      span: [0.714286, 1.00]
+      params:
+        model.sp_1.target_max_sp_cc: {mode: const, value: 20}
+        model.k_p:               {mode: const, value: 16}
+        model.sp_1.k_seed:            {mode: const, value: 64}
+        model.strong_k_min:      {mode: const, value: 6}
+        model.strong_k_max:      {mode: const, value: 10}
+        model.sp_1.edge_threshold:    {mode: const, value: 0.60}
+        model.sp_1.w_cos:             {mode: const, value: 1.00}
+        model.sp_1.w_geo:             {mode: const, value: 0.12}
+        criterion.w_ce:          {mode: const, value: 1.0}
+        criterion.w_cbl:         {mode: const, value: 1.0}
+        criterion.w_sp_disc:     {mode: const, value: 1.0}
+        criterion.cbl_temperature: {mode: const, value: 0.30}
+
+uncertainty:
+  enable: false
+  init_value: 0.0
+  zero_shuts_reg: true
+  loss_names:
+    - ce_loss
+    - cbl_loss
+    - sp_disc_loss
+  weight_attrs:
+    - w_ce
+    - w_cbl
+    - w_sp_disc
